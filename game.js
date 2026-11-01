@@ -24,8 +24,8 @@ function gh(x, z) { // ground height at (x, z)
   sc.add(new THREE.Mesh(g, new THREE.MeshPhongMaterial({ vertexColors: true, flatShading: true, shininess: 0 })));
 })();
 
-const orbG = new THREE.Group(); sc.add(orbG);
-const orbGeo = new THREE.SphereGeometry(.4, 8, 8), orbMat = new THREE.MeshBasicMaterial({ color: 0xffe14d });
+const ringGeo = new THREE.RingGeometry(.9, 1, 40); ringGeo.rotateX(-Math.PI / 2);
+const boltGeo = new THREE.CylinderGeometry(.12, .12, 20, 6);
 const bGeo = new THREE.SphereGeometry(.28, 8, 8), bMat = new THREE.MeshBasicMaterial({ color: 0xff3b30 }), bMatC = new THREE.MeshBasicMaterial({ color: 0xffffff });
 const gGeo = new THREE.OctahedronGeometry(.25), gMat = new THREE.MeshBasicMaterial({ color: 0x4dffd2 });
 const eGeo = new THREE.SphereGeometry(.7, 10, 8), eyeGeo = new THREE.BoxGeometry(.18, .08, .05), eyeMat = new THREE.MeshBasicMaterial({ color: 0xffe14d });
@@ -37,17 +37,20 @@ const TY = [
 ];
 const TM = TY.map(t => new THREE.MeshLambertMaterial({ color: t.c, emissive: t.c }));
 
-let S, E, B, G, P, aura, keys = {}, yaw = 0, run = false, pause = true, py = 0, vy = 0, grounded = true, airLeft = 0, jumpReq = false, orbA = 0, last = performance.now(), acc = 0;
+let S, E, B, G, FX = [], P, aura, keys = {}, yaw = 0, run = false, pause = true, py = 0, vy = 0, grounded = true, airLeft = 0, jumpReq = false, last = performance.now(), acc = 0;
 let dashT = 0, dashCdT = 0, ld = { x: 0, z: 1 }, cTab = 'chars';
 const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
 
 function init() {
-  [...(E || []), ...(B || []), ...(G || [])].forEach(o => sc.remove(o.m));
+  [...(E || []), ...(B || []), ...(G || []), ...FX].forEach(o => sc.remove(o.m));
+  FX = [];
   if (P) sc.remove(P);
   const c = CHARACTERS[currentChar];
   P = c.build(); aura = P.userData.aura; sc.add(P);
-  S = { ...c.stats, max: c.stats.hp, hp: c.stats.hp, pi: 0, orbs: 0, air: 0, mag: 3, lvl: 1, xp: 0, need: 5, kills: 0, t: 0, fire: 0 };
-  E = []; B = []; G = []; py = 0; vy = 0; grounded = true; airLeft = 0; jumpReq = false; dashT = 0; dashCdT = 0; orbG.clear();
+  // W = equipped Personas (weapons), A = equipped Arcana (items); max 3 each
+  S = { ...c.stats, base: c.stats.hp, max: c.stats.hp, hp: c.stats.hp, air: 0, mag: 3, lvl: 1, xp: 0, need: 5, kills: 0, t: 0, W: [{ id: c.startPersona, l: 1, t: 0 }], A: [] };
+  E = []; B = []; G = []; py = 0; vy = 0; grounded = true; airLeft = 0; jumpReq = false; dashT = 0; dashCdT = 0;
+  updateSlots();
 }
 function spawn() {
   const t = S.t, r = Math.random(), k = t > 110 && r < .12 ? 2 : (t > 40 && r < .35 ? 1 : 0), T = TY[k];
@@ -62,22 +65,49 @@ function nearest() {
   for (const e of E) { const d = (e.m.position.x - P.position.x) ** 2 + (e.m.position.z - P.position.z) ** 2; if (d < bd) { bd = d; b = e; } }
   return b;
 }
-function shoot() {
-  const t = nearest(); if (!t) return; aura.scale.setScalar(1.8);
-  const px = P.position, sy = px.y + 1.6, tx = t.m.position.x - px.x, tz = t.m.position.z - px.z, hd = Math.hypot(tx, tz) || 1;
-  const slope = (t.m.position.y - sy) / hd, base = Math.atan2(tx, tz);
-  for (let i = 0; i < S.n; i++) {
-    const a = base + (i - (S.n - 1) / 2) * .22, crit = Math.random() < S.crit, m = new THREE.Mesh(bGeo, crit ? bMatC : bMat);
-    if (crit) m.scale.setScalar(1.5);
-    m.position.set(px.x, sy, px.z); sc.add(m);
-    B.push({ m, vx: Math.sin(a) * 28, vz: Math.cos(a) * 28, vy: 28 * slope, l: 1.4, pi: S.pi, crit, hit: new Set() });
-  }
-}
 function kill(e) {
   sc.remove(e.m); E.splice(E.indexOf(e), 1); S.kills++;
   const m = new THREE.Mesh(gGeo, gMat); m.position.set(e.m.position.x, gh(e.m.position.x, e.m.position.z) + .5, e.m.position.z); sc.add(m); G.push({ m, x: e.x });
 }
 function hurt(e, d) { e.hp -= d; e.m.scale.setScalar(e.s * 1.25); if (e.hp <= 0) kill(e); }
+
+// ---------- Personas (weapons) & Arcana (items) ----------
+const mod = k => S.A.reduce((s, a) => s + (ARCANA[a.id].per[k] || 0) * a.l, 0); // total Arcana bonus for a stat
+function roll(base) { const c = Math.random() < S.crit + mod('crit'); return base * S.dmg * (1 + mod('dmg')) * (c ? 2 : 1); }
+function applyItems() { const m = S.base + mod('hp'), d = m - S.max; S.max = m; if (d > 0) S.hp += d; }
+function addFx(m, life, r) { sc.add(m); FX.push({ m, t: 0, life, r }); }
+// Behavior of each Persona (numbers are in personas.js)
+const FIRE = {
+  orpheus(st) { // soul notes at the nearest Shadow (aims in 3D)
+    const t = nearest(); if (!t) return; aura.scale.setScalar(1.8);
+    const px = P.position, sy = px.y + 1.6, tx = t.m.position.x - px.x, tz = t.m.position.z - px.z, hd = Math.hypot(tx, tz) || 1;
+    const slope = (t.m.position.y - sy) / hd, base = Math.atan2(tx, tz);
+    for (let i = 0; i < st.n; i++) {
+      const a = base + (i - (st.n - 1) / 2) * .22, crit = Math.random() < S.crit + mod('crit'), m = new THREE.Mesh(bGeo, crit ? bMatC : bMat);
+      if (crit) m.scale.setScalar(1.5);
+      m.position.set(px.x, sy, px.z); sc.add(m);
+      B.push({ m, vx: Math.sin(a) * 28, vz: Math.cos(a) * 28, vy: 28 * slope, l: 1.4, pi: st.pi, dmg: st.dmg * S.dmg * (1 + mod('dmg')) * (crit ? 2 : 1), hit: new Set() });
+    }
+  },
+  arsene(st) { // curse shockwave around the player
+    const px = P.position; aura.scale.setScalar(1.8);
+    for (const e of [...E]) { const p = e.m.position; if ((p.x - px.x) ** 2 + (p.z - px.z) ** 2 < (st.r + e.s * .7) ** 2 && Math.abs(p.y - px.y) < 4) hurt(e, roll(st.dmg)); }
+    const m = new THREE.Mesh(ringGeo, new THREE.MeshBasicMaterial({ color: 0xe60012, transparent: true, side: THREE.DoubleSide }));
+    m.position.set(px.x, px.y + .3, px.z); addFx(m, .35, st.r);
+  },
+  izanagi(st) { // lightning on random Shadows nearby
+    const px = P.position; aura.scale.setScalar(1.8);
+    const c = E.filter(e => (e.m.position.x - px.x) ** 2 + (e.m.position.z - px.z) ** 2 < 576).sort(() => Math.random() - .5).slice(0, st.n);
+    for (const e of c) {
+      const p = e.m.position, m = new THREE.Mesh(boltGeo, new THREE.MeshBasicMaterial({ color: 0xfff27a, transparent: true }));
+      m.position.set(p.x, p.y + 10, p.z); addFx(m, .2, 0); hurt(e, roll(st.dmg));
+    }
+  }
+};
+function updateSlots() {
+  const row = (label, list, data, cls) => label + ' ' + [0, 1, 2].map(i => list[i] ? `<span class="pill ${cls}">${data[list[i].id].name} ${list[i].l}</span>` : '<span class="pill empty">—</span>').join('');
+  $('slots').innerHTML = row('PERSONAS', S.W, PERSONAS, 'p') + '<br>' + row('ARCANA &nbsp;&nbsp;&nbsp;', S.A, ARCANA, '');
+}
 
 // ---------- Screens ----------
 function ov(h) {
@@ -97,15 +127,19 @@ function mainMenu() {
 }
 function charSelect() {
   const c = CHARACTERS[currentChar];
-  ov(`<h1>${c.name}</h1><div class="sheet"><b>${c.title}</b><br>Arcana: ${c.arcana} · Persona: ${c.persona}<br><b>${c.passive[0]}</b>: ${c.passive[1]}<br><b>${c.skill[0]}</b>: ${c.skill[1]}</div>
-  <p>Survive 5 minutes against the Shadows.<br>WASD (ZQSD on AZERTY): move · Space: jump · SHIFT: dash · Esc: pause<br>Drag the mouse or ← →: camera</p>
+  ov(`<h1>${c.name}</h1><div class="sheet"><b>${c.title}</b><br>Arcana: ${c.arcana} · Starting Persona: ${PERSONAS[c.startPersona].name}<br><b>${c.passive[0]}</b>: ${c.passive[1]}<br><b>${c.skill[0]}</b>: ${c.skill[1]}</div>
+  <p>Survive 5 minutes against the Shadows. Equip up to 3 Personas (weapons) and 3 Arcana (items).<br>WASD (ZQSD on AZERTY): move · Space: jump · SHIFT: dash · Esc: pause<br>Drag the mouse or ← →: camera</p>
   <button data-act="start">TAKE YOUR HEART</button><button data-act="menu">BACK</button>`);
 }
 function compendium() {
-  const tabs = [['chars', 'Characters'], ['items', 'Items / Personas'], ['enemies', 'Enemies']];
+  const tabs = [['chars', 'Characters'], ['items', 'Personas / Arcana'], ['enemies', 'Enemies']];
   let body = '';
-  if (cTab == 'chars') body = Object.values(CHARACTERS).map(c => `<div class="entry"><b>${c.name}</b> — ${c.title}<br>Arcana: ${c.arcana} · Persona: ${c.persona}<br>${c.passive[0]}: ${c.passive[1]}<br>${c.skill[0]}: ${c.skill[1]}</div>`).join('');
-  if (cTab == 'items') body = UPGRADES.map(u => `<div class="entry"><b>${u.n}</b><br>${u.d}${u.char ? ' <i>(character-specific)</i>' : ''}</div>`).join('');
+  if (cTab == 'chars') body = Object.values(CHARACTERS).map(c => `<div class="entry"><b>${c.name}</b> — ${c.title}<br>Arcana: ${c.arcana} · Starting Persona: ${PERSONAS[c.startPersona].name}<br>${c.passive[0]}: ${c.passive[1]}<br>${c.skill[0]}: ${c.skill[1]}</div>`).join('');
+  if (cTab == 'items') {
+    const lv = d => d.map((x, i) => `Lv ${i + 1}: ${x}`).join('<br>');
+    body = '<b>PERSONAS (weapons)</b>' + Object.values(PERSONAS).map(p => `<div class="entry"><b>${p.name}</b><br>${p.desc}<br><small>${lv(p.lvDesc)}</small></div>`).join('')
+      + '<br><b>ARCANA (items)</b>' + Object.values(ARCANA).map(a => `<div class="entry"><b>${a.name}</b><br>${a.d}</div>`).join('');
+  }
   if (cTab == 'enemies') body = TY.map(t => `<div class="entry"><b>${t.name}</b><br>${t.desc}<br>HP ${t.hp} · Speed ${t.sp} · Damage ${t.d}/s</div>`).join('');
   ov(`<h1>COMPENDIUM</h1><div class="tabs">${tabs.map(t => `<button class="tab${cTab == t[0] ? ' on' : ''}" data-tab="${t[0]}">${t[1]}</button>`).join('')}</div><div class="sheet list">${body}</div><button data-act="menu">BACK</button>`);
   document.querySelectorAll('[data-tab]').forEach(b => b.onclick = () => { cTab = b.dataset.tab; compendium(); });
@@ -115,11 +149,22 @@ function options() {
   $('sens').oninput = e => { sens = e.target.value * .002; try { localStorage.setItem('pbonk_sens', sens); } catch (_) {} };
 }
 function levelUp() {
-  pause = true; const c = CHARACTERS[currentChar];
-  const pool = UPGRADES.filter(u => !u.char || c.extraUpgrades.includes(u.id));
-  const ch = pool.sort(() => Math.random() - .5).slice(0, 3);
-  ov('<h1>LEVEL UP</h1><div class="cards">' + ch.map((u, i) => `<div class="card" data-i="${i}">${u.n}<small>${u.d}</small></div>`).join('') + '</div>');
-  document.querySelectorAll('.card').forEach(el => el.onclick = () => { ch[el.dataset.i].f(S); $('ov').classList.add('off'); pause = false; last = performance.now(); });
+  // Choices: level up an equipped item, or take a new one if a slot is free
+  const o = [], add = (list, data, t) => Object.keys(data).forEach(id => {
+    const x = list.find(y => y.id == id);
+    if (x) { if (x.l < 5) o.push({ t, id, l: x.l + 1 }); } else if (list.length < 3) o.push({ t, id, l: 1 });
+  });
+  add(S.W, PERSONAS, 'W'); add(S.A, ARCANA, 'A');
+  if (!o.length) { S.hp = Math.min(S.max, S.hp + S.max * .3); return; } // everything maxed: heal instead
+  pause = true;
+  const ch = o.sort(() => Math.random() - .5).slice(0, 3);
+  const info = x => x.t == 'W' ? [PERSONAS[x.id].name, PERSONAS[x.id].lvDesc[x.l - 1], 'PERSONA'] : [ARCANA[x.id].name, ARCANA[x.id].d, 'ARCANA'];
+  ov('<h1>LEVEL UP</h1><div class="cards">' + ch.map((x, i) => { const [n, d, tag] = info(x); return `<div class="card" data-i="${i}"><span class="tag">${tag} · ${x.l == 1 ? 'NEW' : 'Lv ' + (x.l - 1) + ' → ' + x.l}</span>${n}<small>${d}</small></div>`; }).join('') + '</div>');
+  document.querySelectorAll('.card').forEach(el => el.onclick = () => {
+    const x = ch[el.dataset.i], list = x.t == 'W' ? S.W : S.A, y = list.find(z => z.id == x.id);
+    if (y) y.l = x.l; else list.push({ id: x.id, l: 1, t: 0 });
+    applyItems(); updateSlots(); $('ov').classList.add('off'); pause = false; last = performance.now();
+  });
 }
 function start() { init(); $('ov').classList.add('off'); pause = false; run = true; last = performance.now(); }
 function end(win) {
@@ -164,11 +209,15 @@ function loop(now) {
     const gy = gh(px.x, px.z);
     if (py <= gy || (grounded && vy <= 0 && py - gy < .5)) { py = gy; vy = 0; if (!grounded) airLeft = S.air; grounded = true; } else grounded = false;
     px.y = py;
-    S.fire -= dt; if (S.fire <= 0) { shoot(); S.fire = S.cd; }
+    // Regen (Priestess) + Personas
+    S.hp = Math.min(S.max, S.hp + mod('regen') * dt);
+    for (const w of S.W) { w.t -= dt; if (w.t <= 0) { const st = PERSONAS[w.id].lv[w.l - 1]; FIRE[w.id](st); w.t = st.cd; } }
+    for (const fx of [...FX]) {
+      fx.t += dt; const k = Math.min(1, fx.t / fx.life); if (fx.r) fx.m.scale.setScalar(fx.r * k); fx.m.material.opacity = 1 - k;
+      if (k >= 1) { sc.remove(fx.m); fx.m.material.dispose(); FX.splice(FX.indexOf(fx), 1); }
+    }
     acc += dt * (1.4 + S.t / 35); while (acc > 1 && E.length < 170) { acc--; spawn(); } acc = Math.min(acc, 3);
     aura.rotation.y += dt * 2; aura.scale.lerp(new THREE.Vector3(1, 1, 1), dt * 8);
-    orbA += dt * 3; while (orbG.children.length < S.orbs) orbG.add(new THREE.Mesh(orbGeo, orbMat));
-    orbG.children.forEach((o, i) => { const a = orbA + i * 6.28 / S.orbs; o.position.set(px.x + Math.cos(a) * 3, py + 1, px.z + Math.sin(a) * 3); });
     for (const e of [...E]) {
       const p = e.m.position, dx = px.x - p.x, dz = px.z - p.z, d = Math.hypot(dx, dz) || 1;
       p.x += dx / d * e.sp * dt; p.z += dz / d * e.sp * dt; e.m.rotation.y = Math.atan2(dx, dz);
@@ -176,17 +225,13 @@ function loop(now) {
       p.y = gh(p.x, p.z) + .7 * e.s;
       e.m.scale.lerp(new THREE.Vector3(e.s, e.s, e.s), dt * 10);
       if (d < e.s * .9 + .6 && py < p.y + .5 * e.s && dashT <= 0) S.hp -= e.d * dt; // jump over them!
-      for (let i = 0; i < orbG.children.length; i++) {
-        const o = orbG.children[i].position;
-        if ((o.x - p.x) ** 2 + (o.y - p.y) ** 2 + (o.z - p.z) ** 2 < (e.s * .7 + .5) ** 2 && !(e.h[i] > S.t - .4)) { e.h[i] = S.t; hurt(e, S.dmg * 1.2); }
-      }
     }
     for (const b of [...B]) {
       const q = b.m.position; q.x += b.vx * dt; q.y += b.vy * dt; q.z += b.vz * dt; b.l -= dt; let dead = b.l <= 0 || q.y < gh(q.x, q.z);
       for (const e of [...E]) {
         if (dead) break; if (b.hit.has(e)) continue; const p = e.m.position;
         if ((p.x - q.x) ** 2 + (p.y - q.y) ** 2 + (p.z - q.z) ** 2 < (e.s * .8 + .3) ** 2) {
-          b.hit.add(e); hurt(e, S.dmg * 1.5 * (b.crit ? 2 : 1)); if (b.pi-- <= 0) dead = true;
+          b.hit.add(e); hurt(e, b.dmg); if (b.pi-- <= 0) dead = true;
         }
       }
       if (dead) { sc.remove(b.m); B.splice(B.indexOf(b), 1); }
@@ -195,7 +240,7 @@ function loop(now) {
       const p = g.m.position, dx = px.x - p.x, dz = px.z - p.z, d = Math.hypot(dx, dz); g.m.rotation.y += dt * 4;
       if (d < S.mag) { p.x += dx / d * 14 * dt; p.z += dz / d * 14 * dt; }
       p.y = gh(p.x, p.z) + .5;
-      if (d < .9 && Math.abs(py - p.y) < 2.5) { sc.remove(g.m); G.splice(G.indexOf(g), 1); S.xp += g.x; if (S.xp >= S.need) { S.xp -= S.need; S.lvl++; S.need = Math.round(S.need * 1.35 + 2); levelUp(); } }
+      if (d < .9 && Math.abs(py - p.y) < 2.5) { sc.remove(g.m); G.splice(G.indexOf(g), 1); S.xp += g.x * (1 + mod('xp')); if (S.xp >= S.need) { S.xp -= S.need; S.lvl++; S.need = Math.round(S.need * 1.35 + 2); levelUp(); } }
     }
     const cx = px.x + Math.sin(yaw) * 13, cz = px.z + Math.cos(yaw) * 13;
     cam.position.set(cx, Math.max(py + 11, gh(clamp(cx, -BOUND, BOUND), clamp(cz, -BOUND, BOUND)) + 3), cz); cam.lookAt(px.x, py + 1.5, px.z);
