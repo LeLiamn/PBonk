@@ -1,13 +1,13 @@
-// Un fichier = tous les personnages. Pour en ajouter un : copie le bloc "rei" et change les valeurs.
-// Plus tard : remplace build() par un chargement de modèle .glb (dossier models/).
+// One file = all characters. To add one: copy the "rei" block and change the values.
+// Later: replace build() with a .glb model loader (models/ folder).
 const CHARACTERS = {
   rei: {
-    id: 'rei', name: 'REI', title: 'Le Voleur Fantôme', arcana: 'Fool', persona: 'Raven',
-    passive: ['Cœur de rebelle', '15 % de chances de coup critique (dégâts x2).'],
-    skill: ['Pas fantôme', 'MAJ : dash invulnérable (recharge 3 s).'],
-    // Stats de départ
+    id: 'rei', name: 'REI', title: 'The Phantom Thief', arcana: 'Fool', persona: 'Raven',
+    passive: ['Rebel Heart', '15% chance of a critical hit (x2 damage).'],
+    skill: ['Phantom Step', 'SHIFT: invulnerable dash (3 s cooldown).'],
+    // Starting stats
     stats: { hp: 100, spd: 7, dmg: 1, cd: 0.9, n: 1, crit: 0.15, dashCd: 3 },
-    // Upgrades spécifiques (ids définis dans upgrades.js)
+    // Character-specific upgrades (ids defined in upgrades.js)
     extraUpgrades: ['crit', 'dashcd'],
     build() {
       const M = c => new THREE.MeshLambertMaterial({ color: c });
