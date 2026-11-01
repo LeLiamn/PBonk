@@ -57,7 +57,19 @@ function kill(e) {
 }
 function hurt(e, d) { e.hp -= d; e.m.scale.setScalar(e.s * 1.25); if (e.hp <= 0) kill(e); }
 
-function ov(h) { const o = $('ov'); o.innerHTML = '<div>' + h + '</div>'; o.classList.remove('off'); const b = $('go'); if (b) b.onclick = start; }
+function ov(h) {
+  const o = $('ov'); o.innerHTML = '<div>' + h + '</div>'; o.classList.remove('off');
+  o.querySelectorAll('[data-act]').forEach(b => b.onclick = () => ACT[b.dataset.act]());
+}
+// Actions des boutons (data-act="...")
+const ACT = {
+  play: () => charSelect(),
+  compendium: () => compendium(),
+  options: () => options(),
+  start: () => start(),
+  resume: () => { $('ov').classList.add('off'); pause = false; last = performance.now(); },
+  menu: () => { run = false; pause = true; init(); cam.position.set(0, 11, 13); cam.lookAt(0, 1.5, 0); mainMenu(); }
+};
 function levelUp() {
   pause = true; const c = CHARACTERS[currentChar];
   const pool = UPGRADES.filter(u => !u.char || c.extraUpgrades.includes(u.id));
@@ -65,22 +77,41 @@ function levelUp() {
   ov('<h1>LEVEL UP</h1><div class="cards">' + ch.map((u, i) => `<div class="card" data-i="${i}">${u.n}<small>${u.d}</small></div>`).join('') + '</div>');
   document.querySelectorAll('.card').forEach(el => el.onclick = () => { ch[el.dataset.i].f(S); $('ov').classList.add('off'); pause = false; last = performance.now(); });
 }
-function menu() {
+function mainMenu() {
+  ov(`<h1>PBONK</h1><div class="menu"><button data-act="play">PLAY</button><button data-act="compendium">COMPENDIUM</button><button data-act="options">OPTIONS</button></div>`);
+}
+function charSelect() {
   const c = CHARACTERS[currentChar];
-  ov(`<h1>SHADOW SURVIVORS</h1><div class="sheet"><b>${c.name}</b> — ${c.title}<br>Arcane : ${c.arcana} · Persona : ${c.persona}<br><b>${c.passive[0]}</b> : ${c.passive[1]}<br><b>${c.skill[0]}</b> : ${c.skill[1]}</div>
-  <p>Survis 5 minutes face aux Shadows.<br>ZQSD / WASD : bouger · Espace : sauter · MAJ : dash · Souris (glisser) ou ← → : caméra</p><button id="go">TAKE YOUR HEART</button>`);
+  ov(`<h1>${c.name}</h1><div class="sheet"><b>${c.title}</b><br>Arcane : ${c.arcana} · Persona : ${c.persona}<br><b>${c.passive[0]}</b> : ${c.passive[1]}<br><b>${c.skill[0]}</b> : ${c.skill[1]}</div>
+  <p>Survis 5 minutes face aux Shadows.<br>ZQSD / WASD : bouger · Espace : sauter · MAJ : dash · Échap : pause<br>Souris (glisser) ou ← → : caméra</p>
+  <button data-act="start">TAKE YOUR HEART</button><button data-act="menu">RETOUR</button>`);
+}
+function compendium() {
+  ov(`<h1>COMPENDIUM</h1><p>Ici seront listés les personnages, les Shadows et les Arcanes découverts.</p>
+  <div class="sheet"><b>Personnages</b><br>${Object.values(CHARACTERS).map(c => c.name + ' — ' + c.title).join('<br>')}<br><br><b>Shadows</b><br>??? · ??? · ???</div>
+  <button data-act="menu">RETOUR</button>`);
+}
+function options() {
+  ov(`<h1>OPTIONS</h1><div class="sheet"><b>Sensibilité de la caméra</b><br><input id="sens" type="range" min="1" max="10" value="${Math.round(sens / .002)}"><br><small>Le volume arrivera avec le son.</small></div><button data-act="menu">RETOUR</button>`);
+  $('sens').oninput = e => { sens = e.target.value * .002; try { localStorage.setItem('pbonk_sens', sens); } catch (_) {} };
 }
 function start() { init(); $('ov').classList.add('off'); pause = false; run = true; last = performance.now(); }
 function end(win) {
   pause = true;
-  ov(`<h1>${win ? 'ALL-OUT ATTACK !' : 'GAME OVER'}</h1><p>${win ? 'Tu as survécu 5 minutes.' : 'Les Shadows ont gagné.'} Niveau ${S.lvl} · ${S.kills} Shadows vaincues.</p><button id="go">RÉESSAYER</button>`);
+  ov(`<h1>${win ? 'ALL-OUT ATTACK !' : 'GAME OVER'}</h1><p>${win ? 'Tu as survécu 5 minutes.' : 'Les Shadows ont gagné.'} Niveau ${S.lvl} · ${S.kills} Shadows vaincues.</p><button data-act="start">RÉESSAYER</button><button data-act="menu">MENU</button>`);
 }
 
-addEventListener('keydown', e => { keys[e.code] = 1; if (e.code == 'Space') e.preventDefault(); });
+addEventListener('keydown', e => {
+  keys[e.code] = 1; if (e.code == 'Space') e.preventDefault();
+  if (e.code == 'Escape' && run && !pause && $('ov').classList.contains('off')) {
+    pause = true; ov('<h1>PAUSE</h1><div class="menu"><button data-act="resume">REPRENDRE</button><button data-act="menu">MENU PRINCIPAL</button></div>');
+  }
+});
 addEventListener('keyup', e => keys[e.code] = 0);
+let sens = .006; try { const v = parseFloat(localStorage.getItem('pbonk_sens')); if (v) sens = v; } catch (_) {}
 let drag = 0; R.domElement.onpointerdown = e => { drag = e.clientX; };
 addEventListener('pointerup', () => drag = 0);
-addEventListener('pointermove', e => { if (drag) { yaw -= (e.clientX - drag) * .006; drag = e.clientX; } });
+addEventListener('pointermove', e => { if (drag) { yaw -= (e.clientX - drag) * sens; drag = e.clientX; } });
 addEventListener('resize', () => { R.setSize(innerWidth, innerHeight); cam.aspect = innerWidth / innerHeight; cam.updateProjectionMatrix(); });
 
 function loop(now) {
@@ -138,4 +169,4 @@ function loop(now) {
   }
   R.render(sc, cam);
 }
-init(); cam.position.set(0, 11, 13); cam.lookAt(0, 1.5, 0); menu(); requestAnimationFrame(loop);
+init(); cam.position.set(0, 11, 13); cam.lookAt(0, 1.5, 0); mainMenu(); requestAnimationFrame(loop);
